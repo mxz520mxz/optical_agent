@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+results/
+*.zmx
+*.log
+.DS_Store

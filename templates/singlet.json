@@ -1,0 +1,43 @@
+{
+  "info": "Simple singlet biconvex lens template (100mm f/10)",
+  "foclen": 100.0,
+  "fnum": 10.0,
+  "r_sensor": 5.0,
+  "d_sensor": 96.0,
+  "sensor_size": [7.07, 7.07],
+  "surfaces": [
+    {
+      "idx": 1,
+      "type": "Aperture",
+      "r": 5.0,
+      "d": 0.0,
+      "mat1": "air",
+      "mat2": "air",
+      "d_next": 0.0,
+      "is_square": false,
+      "diffraction": false
+    },
+    {
+      "idx": 2,
+      "type": "Spheric",
+      "r": 6.0,
+      "c": 0.0103,
+      "roc": 97.09,
+      "d": 0.0,
+      "mat1": "air",
+      "mat2": "1.5168/64.2",
+      "d_next": 6.0
+    },
+    {
+      "idx": 3,
+      "type": "Spheric",
+      "r": 6.0,
+      "c": -0.0103,
+      "roc": -97.09,
+      "d": 6.0,
+      "mat1": "1.5168/64.2",
+      "mat2": "air",
+      "d_next": 90.0
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "info": "Achromatic doublet lens template (50mm f/4, APS-C format)",
+  "foclen": 50.0,
+  "fnum": 4.0,
+  "r_sensor": 14.2,
+  "d_sensor": 55.0,
+  "sensor_size": [23.6, 15.7],
+  "surfaces": [
+    {
+      "idx": 1,
+      "type": "Aperture",
+      "r": 6.5,
+      "d": 0.0,
+      "mat1": "air",
+      "mat2": "air",
+      "d_next": 0.0,
+      "is_square": false,
+      "diffraction": false
+    },
+    {
+      "idx": 2,
+      "type": "Spheric",
+      "r": 7.0,
+      "c": 0.03571,
+      "roc": 28.0,
+      "d": 0.0,
+      "mat1": "air",
+      "mat2": "1.5168/64.2",
+      "d_next": 5.5
+    },
+    {
+      "idx": 3,
+      "type": "Spheric",
+      "r": 7.0,
+      "c": -0.00952,
+      "roc": -105.0,
+      "d": 5.5,
+      "mat1": "1.5168/64.2",
+      "mat2": "1.6200/36.4",
+      "d_next": 3.0
+    },
+    {
+      "idx": 4,
+      "type": "Spheric",
+      "r": 7.0,
+      "c": -0.01923,
+      "roc": -52.0,
+      "d": 8.5,
+      "mat1": "1.6200/36.4",
+      "mat2": "air",
+      "d_next": 46.5
+    }
+  ]
+}
