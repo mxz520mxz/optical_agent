@@ -4,5 +4,8 @@ numpy>=1.24.0
 matplotlib>=3.7.0
 scipy>=1.10.0
 
-# Install DeepLens separately:
-# pip install git+https://github.com/singer-yang/DeepLens.git
+# DeepLens for optical simulation (install one of the following):
+#   Option 1 (PyPI, easier):
+#     pip install deeplens-core-modules
+#   Option 2 (latest from GitHub):
+#     pip install git+https://github.com/singer-yang/DeepLens.git
