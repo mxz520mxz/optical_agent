@@ -8,6 +8,7 @@ import copy
 import json
 import math
 import os
+import sys
 import tempfile
 import time
 from typing import Any
@@ -18,6 +19,11 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ─── DeepLens availability check ──────────────────────────────────────────────
+
+# Prefer git-cloned DeepLens in ./DeepLens/ over any pip-installed version
+_deeplens_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLens")
+if os.path.isdir(_deeplens_local) and _deeplens_local not in sys.path:
+    sys.path.insert(0, _deeplens_local)
 
 try:
     import torch

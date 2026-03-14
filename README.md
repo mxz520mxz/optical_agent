@@ -1,43 +1,67 @@
 # 自动光学镜头设计 Agent
 
-一个基于大语言模型（Claude claude-opus-4-6）的自动化光学镜头设计系统。用户用自然语言描述镜头需求，Agent 自动完成初始结构设计、参数优化和性能评估的完整流程。
+一个基于大语言模型的自动化光学镜头设计系统。用户用自然语言描述镜头需求，Agent 自动完成初始结构设计、参数优化和性能评估的完整流程。支持 Anthropic Claude、OpenAI ChatGPT 以及 Ollama 等本地大模型。
 
 ## 功能特性
 
 - **自然语言输入**：支持中文和英文描述镜头需求
+- **多 LLM 提供商**：支持 Anthropic Claude（默认）、OpenAI ChatGPT / GPT-4、以及 Ollama / LM Studio 等本地模型
 - **自动结构设计**：根据焦距、光圈、视场角自动选择合适的镜头结构（单片、双合、三片、双高斯、长焦、广角）
-- **梯度优化**：调用 [DeepLens](https://github.com/singer-yang/DeepLens) 框架进行可微分光线追迹优化
+- **梯度优化**：调用 [DeepLens](https://github.com/vccimaging/DeepLens) 框架进行可微分光线追迹优化
 - **性能评估**：输出 RMS 弥散斑大小、畸变、色差、MTF 等指标
 - **结构迭代**：根据评估结果智能决策是否增减镜片（最多 3 次结构修改）
 - **结果导出**：保存为 JSON 格式或 Zemax `.zmx` 格式
 
 ## 快速开始
 
-### 1. 安装依赖
+### 方法一：一键安装（推荐）
 
 ```bash
-pip install anthropic torch numpy matplotlib scipy
-# 安装 DeepLens（用于光学仿真和优化）
-pip install git+https://github.com/singer-yang/DeepLens.git
+bash setup.sh        # 自动 git clone DeepLens 并安装依赖
 ```
 
-### 2. 设置 API Key
+### 方法二：手动安装
 
 ```bash
-export ANTHROPIC_API_KEY="your-api-key-here"
+# 1. 克隆 DeepLens 到项目目录
+git clone https://github.com/vccimaging/DeepLens.git
+
+# 2. 安装其余依赖
+pip install -r requirements.txt
 ```
 
-### 3. 运行 Agent
+### 设置 API Key
+
+根据所用提供商设置对应的环境变量：
 
 ```bash
-# 交互模式
+# Anthropic Claude（默认）
+export ANTHROPIC_API_KEY="your-key"
+
+# OpenAI
+export OPENAI_API_KEY="your-key"
+
+# 本地模型（Ollama 等）无需 key，启动服务即可
+```
+
+### 运行 Agent
+
+```bash
+# 交互模式（默认使用 Anthropic Claude）
 python agent.py
 
-# 直接传入描述（中文）
+# Anthropic Claude（默认）
 python agent.py --description "设计一个50mm f/1.8全画幅相机标准镜头"
 
-# 直接传入描述（英文）
-python agent.py --description "Design a 24mm f/2.8 wide-angle lens for APS-C sensor"
+# OpenAI ChatGPT
+python agent.py --provider openai --model gpt-4o \
+    --description "Design a 24mm f/2.8 wide-angle lens for APS-C sensor"
+
+# 本地模型（Ollama，需先 ollama pull qwen2.5:72b && ollama serve）
+python agent.py --provider local \
+    --base-url http://localhost:11434/v1 \
+    --model qwen2.5:72b \
+    --description "telephoto 200mm f/4 for wildlife photography"
 
 # 允许更多结构迭代次数
 python agent.py --description "telephoto 200mm f/4 with minimal chromatic aberration" --max-iter 5
@@ -78,7 +102,8 @@ DeepLens 梯度优化（2000次迭代）
 
 ```
 optical_agent/
-├── agent.py            # 主 Agent（Claude tool use 主循环）
+├── agent.py            # 主 Agent（多提供商 tool use 主循环）
+├── llm_provider.py     # LLM 提供商抽象层（Anthropic / OpenAI / 本地）
 ├── lens_tools.py       # 工具实现（DeepLens 封装）
 ├── lens_templates.py   # 模板选择与缩放逻辑
 ├── templates/          # 初始镜头结构 JSON
@@ -88,6 +113,8 @@ optical_agent/
 │   ├── double_gauss.json
 │   ├── telephoto.json
 │   └── wide_angle.json
+├── DeepLens/           # git clone 到此（.gitignore 已排除）
+├── setup.sh            # 一键安装脚本
 ├── results/            # 优化结果输出目录
 ├── requirements.txt
 └── README.md
@@ -114,9 +141,24 @@ optical_agent/
 
 ## 依赖
 
-- `anthropic >= 0.40.0`：Claude API
+- `anthropic >= 0.40.0`：Anthropic Claude API
+- `openai >= 1.0.0`：OpenAI API 及本地模型（OpenAI 兼容协议）
 - `torch >= 2.0.0`：PyTorch（DeepLens 后端）
 - `numpy >= 1.24.0`
 - `matplotlib >= 3.7.0`
 - `scipy >= 1.10.0`
-- [DeepLens](https://github.com/singer-yang/DeepLens)（光学仿真框架）
+- [DeepLens](https://github.com/vccimaging/DeepLens)（光学仿真框架，通过 `git clone` 安装）
+
+## CLI 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-d / --description` | 镜头需求描述（自然语言）| 交互输入 |
+| `-m / --max-iter` | 最大结构修改次数 | 3 |
+| `-q / --quiet` | 静默模式（仅输出报告） | false |
+| `-p / --provider` | LLM 提供商：`anthropic` / `openai` / `local` | `anthropic` |
+| `--model` | 模型名称 | 按提供商自动选择 |
+| `--base-url` | API 端点（本地模型使用） | `http://localhost:11434/v1` |
+| `--api-key` | 覆盖 API Key | 读取环境变量 |
+
+> **本地模型注意**：function calling 支持因模型而异，推荐使用 Qwen2.5、Mistral 等支持工具调用的模型。

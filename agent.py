@@ -16,6 +16,8 @@ Usage:
   python agent.py
   python agent.py --description "设计一个50mm f/1.8全画幅相机镜头"
   python agent.py --description "Design a 24mm wide angle lens for APS-C sensor" --max-iter 3
+  python agent.py --provider openai --model gpt-4o -d "50mm f/2.8 lens"
+  python agent.py --provider local --base-url http://localhost:11434/v1 --model qwen2.5:72b -d "50mm lens"
 """
 
 import argparse
@@ -24,9 +26,8 @@ import os
 import sys
 from typing import Any
 
-import anthropic
-
 import lens_tools
+import llm_provider
 
 # ─── Tool Definitions for Claude ──────────────────────────────────────────────
 
@@ -309,7 +310,15 @@ Follow these steps in order:
 
 # ─── Main Agent Loop ──────────────────────────────────────────────────────────
 
-def run_agent(user_description: str, max_struct_iter: int = 3, verbose: bool = True) -> str:
+def run_agent(
+    user_description: str,
+    max_struct_iter: int = 3,
+    verbose: bool = True,
+    provider: str = "anthropic",
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> str:
     """
     Run the lens design agent for a given user description.
 
@@ -317,11 +326,16 @@ def run_agent(user_description: str, max_struct_iter: int = 3, verbose: bool = T
         user_description: Natural language description of the desired lens
         max_struct_iter: Maximum structural modification iterations
         verbose: Whether to print progress to stdout
+        provider: LLM provider — "anthropic" (default), "openai", or "local"
+        model: Model name (defaults to provider's default if not given)
+        base_url: API base URL (required for "local"; e.g. http://localhost:11434/v1)
+        api_key: Override API key (otherwise read from environment variable)
 
     Returns:
         Final report text
     """
-    client = anthropic.Anthropic()
+    resolved_model = model or llm_provider.DEFAULT_MODELS.get(provider, "")
+    client = llm_provider.make_client(provider, api_key=api_key, base_url=base_url)
 
     messages = [
         {
@@ -337,6 +351,7 @@ def run_agent(user_description: str, max_struct_iter: int = 3, verbose: bool = T
     if verbose:
         print("\n" + "=" * 60)
         print("OPTICAL LENS DESIGN AGENT")
+        print(f"Provider: {provider}  Model: {resolved_model}")
         print("=" * 60)
         print(f"Requirement: {user_description}")
         print("=" * 60 + "\n")
@@ -351,51 +366,48 @@ def run_agent(user_description: str, max_struct_iter: int = 3, verbose: bool = T
         if verbose:
             print(f"[Agent call {iteration}] Thinking...", end=" ", flush=True)
 
-        response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=8192,
+        resp = llm_provider.call_llm(
+            client=client,
+            provider=provider,
+            model=resolved_model,
             system=SYSTEM_PROMPT,
-            tools=TOOLS,
             messages=messages,
+            tools=TOOLS,
+            max_tokens=8192,
         )
 
         if verbose:
-            print(f"stop_reason={response.stop_reason}")
+            print(f"stop_reason={resp['stop_reason']}")
 
-        # Add assistant response to history
-        messages.append({"role": "assistant", "content": response.content})
+        # Append assistant turn to history
+        llm_provider.append_assistant_message(messages, provider, resp["raw"])
 
-        # Print any text blocks
-        for block in response.content:
-            if hasattr(block, "text") and verbose:
-                print(f"\n[Agent]: {block.text}\n")
-                if "report" in block.text.lower() and "╔" in block.text:
-                    final_report = block.text
+        # Print text output
+        if resp["text"] and verbose:
+            print(f"\n[Agent]: {resp['text']}\n")
+            if "report" in resp["text"].lower() and "╔" in resp["text"]:
+                final_report = resp["text"]
 
         # Check stop condition
-        if response.stop_reason == "end_turn":
+        if resp["stop_reason"] == "end_turn":
             break
 
-        if response.stop_reason != "tool_use":
+        if resp["stop_reason"] != "tool_use":
             if verbose:
-                print(f"Unexpected stop reason: {response.stop_reason}")
+                print(f"Unexpected stop reason: {resp['stop_reason']}")
             break
 
-        # Execute all tool calls in this response
+        # Execute all tool calls
         tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-
-            tool_name = block.name
-            tool_input = block.input
+        for tc in resp["tool_calls"]:
+            tool_name = tc["name"]
+            tool_input = tc["input"]
 
             if verbose:
                 print(f"  → Tool: {tool_name}({_fmt_tool_args(tool_input)})")
 
             result_str = execute_tool(tool_name, tool_input)
 
-            # Print summary of result
             if verbose:
                 try:
                     result_dict = json.loads(result_str)
@@ -408,13 +420,9 @@ def run_agent(user_description: str, max_struct_iter: int = 3, verbose: bool = T
                 except Exception:
                     pass
 
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": result_str,
-            })
+            tool_results.append({"id": tc["id"], "name": tool_name, "content": result_str})
 
-        messages.append({"role": "user", "content": tool_results})
+        llm_provider.append_tool_results(messages, provider, tool_results)
 
     if verbose:
         print("\n" + "=" * 60)
@@ -450,6 +458,8 @@ Examples:
   python agent.py --description "设计一个50mm f/1.8全画幅相机镜头"
   python agent.py --description "Design a compact 24mm f/2.8 wide-angle for APS-C"
   python agent.py --description "telephoto 200mm f/4 for wildlife photography" --max-iter 3
+  python agent.py --provider openai --model gpt-4o -d "50mm f/2.8 standard lens"
+  python agent.py --provider local --base-url http://localhost:11434/v1 --model qwen2.5:72b -d "50mm lens"
         """,
     )
     parser.add_argument(
@@ -468,6 +478,34 @@ Examples:
         "--quiet", "-q",
         action="store_true",
         help="Suppress verbose output",
+    )
+    parser.add_argument(
+        "--provider", "-p",
+        type=str,
+        default="anthropic",
+        choices=["anthropic", "openai", "local"],
+        help="LLM provider: anthropic (default), openai, or local",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help=(
+            "Model name to use (default per provider: "
+            "claude-opus-4-6 / gpt-4o / qwen2.5:72b)"
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="API base URL for local models (e.g. http://localhost:11434/v1)",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="Override API key (otherwise reads from environment variable)",
     )
     args = parser.parse_args()
 
@@ -492,6 +530,10 @@ Examples:
         user_description=description,
         max_struct_iter=args.max_iter,
         verbose=not args.quiet,
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        api_key=args.api_key,
     )
 
     if args.quiet and report:
