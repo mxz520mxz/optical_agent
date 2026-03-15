@@ -97,7 +97,7 @@ def design_initial_structure(
         "summary": summary,
     }
 
-
+    
 def run_optimization(
     lens_id: str,
     iterations: int = 2000,
@@ -143,39 +143,51 @@ def run_optimization(
         device = "cuda" if torch.cuda.is_available() else "cpu"
         lens = GeoLens(filename=tmp_path, device=device)
 
-        # ── Optimizer & scheduler (same pattern as 2_autolens_rms.py) ──────
-        optimizer = lens.get_optimizer(lrs, optim_mat=False)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=max(1, iterations // 4), T_mult=1
+        lens.optimize(
+            lrs=lrs,
+            iterations=iterations,
+            test_per_iter=100,
+            centroid=False,
+            optim_mat=False,
+            shape_control=True,
+            result_dir=result_dir,
         )
 
-        # ── Training loop: RMS spot error + optional regularization ─────────
-        for _ in range(iterations):
-            optimizer.zero_grad()
 
-            # Explicit depth=-10000 (infinity focus) matches _extract_metrics()
-            l_rms = lens.loss_rms(depth=-10000.0)
-            L = l_rms.mean()
+        # # ── Optimizer & scheduler (same pattern as 2_autolens_rms.py) ──────
+        # optimizer = lens.get_optimizer(lrs, optim_mat=False)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        #     optimizer, T_0=max(1, iterations // 4), T_mult=1
+        # )
 
-            # Degenerate-state guard: all rays invalid → mean = 0, no point continuing
-            if L.item() < 1e-8:
-                break
+        # # ── Training loop: RMS spot error + optional regularization ─────────
+        # for _ in range(iterations):
+        #     optimizer.zero_grad()
 
-            # loss_reg() → (combined_reg_scalar, loss_dict); weight by lambda_reg
-            # Note: loss_reg() has internal w_focus=10.0, so effective weight = lambda_reg * 10
-            if lambda_reg > 0:
-                l_reg, _ = lens.loss_reg()
-                L = L + lambda_reg * l_reg
+        #     # Explicit depth=-10000 (infinity focus) matches _extract_metrics()
+        #     l_rms = lens.loss_rms(depth=-10000.0)
+        #     L = l_rms.mean()
 
-            L.backward()
-            # Gradient clipping prevents parameter explosion on large-loss initial designs
-            torch.nn.utils.clip_grad_norm_(lens.parameters(), max_norm=1.0)
-            optimizer.step()
-            scheduler.step()
+        #     # Degenerate-state guard: all rays invalid → mean = 0, no point continuing
+        #     if L.item() < 1e-8:
+        #         break
+
+        #     # loss_reg() → (combined_reg_scalar, loss_dict); weight by lambda_reg
+        #     # Note: loss_reg() has internal w_focus=10.0, so effective weight = lambda_reg * 10
+        #     if lambda_reg > 0:
+        #         l_reg, _ = lens.loss_reg()
+        #         L = L + lambda_reg * l_reg
+
+        #     L.backward()
+        #     # Gradient clipping prevents parameter explosion on large-loss initial designs
+        #     # torch.nn.utils.clip_grad_norm_(lens.parameters(), max_norm=1.0)
+        #     optimizer.step()
+        #     scheduler.step()
 
         # ── Save result ──────────────────────────────────────────────────────
         out_json = os.path.join(result_dir, "optimized.json")
         lens.write_lens_json(out_json)
+        lens.analysis(save_name=f"{result_dir}/final_lens")
         with open(out_json) as f:
             optimized_config = json.load(f)
 
@@ -303,16 +315,32 @@ def add_lens_element(
         d_next_back = 5.0 * scale
         config["d_sensor"] += thickness + d_next_back
     else:
+        # 在中间插入
         prev = surfaces[insert_at - 1]
-        d_start = prev["d"] + prev.get("d_next", 1.0)
+        original_next_d = prev["d"] + prev.get("d_next", 1.0) # 原本下一个面的坐标
+        
         gap = prev["d_next"]
-        prev["d_next"] = gap / 2
-        d_next_back = gap / 2 - thickness
+        prev["d_next"] = gap / 2               # 原镜片到新镜片的距离
+        d_start = prev["d"] + prev["d_next"]   # 新前表面坐标
+        
+        d_next_back = gap / 2 - thickness      # 理想情况下的剩余间隙
+        
+        # 强制防穿模保护：保证玻璃之间至少有 0.5mm 的空气
         if d_next_back < 0.5:
             d_next_back = 0.5
-            config["d_sensor"] += thickness + 0.5
+            
+        # 重新推算后续镜片应该在的绝对坐标
+        new_next_d = d_start + thickness + d_next_back
+        
+        # 计算需要整体往后推移的净距离
+        shift_distance = new_next_d - original_next_d
+        
+        if shift_distance > 0:
+            config["d_sensor"] += shift_distance
+            
+        # 完美平移后续所有面
         for s in surfaces[insert_at:]:
-            s["d"] += thickness + (gap / 2 - gap)
+            s["d"] += shift_distance
 
     max_idx = max(s["idx"] for s in surfaces) if surfaces else 0
     new_front = {

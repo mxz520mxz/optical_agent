@@ -42,6 +42,23 @@ def store(lens_config: dict, label: str | None = None) -> str:
     return lens_id
 
 
+def _clean_deeplens_json(data):
+    """
+    递归清洗 DeepLens 导出的 JSON。
+    去掉所有键名两侧的括号，例如将 "(c)" 还原为 "c"。
+    """
+    if isinstance(data, dict):
+        clean_dict = {}
+        for k, v in data.items():
+            # 剥离键名两端的 '(' 和 ')'
+            clean_k = k.strip("()")
+            clean_dict[clean_k] = _clean_deeplens_json(v)
+        return clean_dict
+    elif isinstance(data, list):
+        return [_clean_deeplens_json(item) for item in data]
+    else:
+        return data
+    
 def load(lens_id: str) -> dict:
     """
     Load a lens_config by its ID.
@@ -56,7 +73,7 @@ def load(lens_id: str) -> dict:
             f"Available IDs: {list_ids()}"
         )
     with open(path) as f:
-        return json.load(f)
+        return _clean_deeplens_json(json.load(f))
 
 
 def list_ids() -> list[str]:
