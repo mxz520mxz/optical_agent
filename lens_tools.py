@@ -20,6 +20,10 @@ from typing import Any
 from lens_templates import select_template
 import lens_memory
 
+# ─── Session-level best-lens tracker ──────────────────────────────────────────
+
+_session_metrics: dict[str, float] = {}  # lens_id → center RMS spot (µm), lower is better
+
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -153,6 +157,32 @@ def run_optimization(
             result_dir=result_dir,
         )
 
+        # ── Select best checkpoint from saved iter{i}.json snapshots ─────────
+        # DeepLens saves iter{i}.json every test_per_iter=100 iterations.
+        # The final iteration state may not be the global minimum (due to LR
+        # warm restarts), so we scan all snapshots and pick the best one.
+        import glob as _glob
+        snap_paths = sorted(
+            _glob.glob(os.path.join(result_dir, "iter*.json")),
+            key=lambda p: int(
+                "".join(filter(str.isdigit, os.path.splitext(os.path.basename(p))[0])) or "0"
+            ),
+        )
+        best_snap_path = None
+        best_snap_loss = float("inf")
+        for snap_path in snap_paths:
+            try:
+                snap_lens = GeoLens(filename=snap_path, device=device)
+                snap_loss = snap_lens.loss_rms(depth=-10000.0).mean().item()
+                if snap_loss < best_snap_loss:
+                    best_snap_loss = snap_loss
+                    best_snap_path = snap_path
+            except Exception:
+                continue
+        # Reload from best snapshot if it is meaningfully better than final state
+        final_loss = lens.loss_rms(depth=-10000.0).mean().item()
+        if best_snap_path and best_snap_loss < final_loss * 0.99:
+            lens = GeoLens(filename=best_snap_path, device=device)
 
         # # ── Optimizer & scheduler (same pattern as 2_autolens_rms.py) ──────
         # optimizer = lens.get_optimizer(lrs, optim_mat=False)
@@ -198,7 +228,7 @@ def run_optimization(
             "iterations_run": iterations,
             "status": "success",
             "config_summary": lens_memory.summarize(optimized_config),
-            "summary": f"Optimization complete ({iterations} iterations). Use lens_id={new_id!r} for next steps.",
+            "summary": f"Optimization complete ({iterations} iterations, best checkpoint used). Use lens_id={new_id!r} for next steps.",
         }
     except Exception as e:
         return {
@@ -226,7 +256,13 @@ def evaluate_lens(lens_id: str) -> dict:
         return {"error": str(e), "summary": f"Failed to load lens: {e}"}
 
     if not DEEPLENS_AVAILABLE:
-        return _mock_evaluation(lens_config)
+        mock_metrics = _mock_evaluation(lens_config)
+        mock_metrics["lens_id"] = lens_id
+        rms = mock_metrics.get("rms_spot_um", {})
+        center = rms.get("0% field") if isinstance(rms, dict) else None
+        if isinstance(center, (int, float)):
+            _session_metrics[lens_id] = center
+        return mock_metrics
 
     with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as tmp:
         json.dump(lens_config, tmp)
@@ -238,6 +274,11 @@ def evaluate_lens(lens_id: str) -> dict:
         metrics = _extract_metrics(lens)
         metrics["lens_id"] = lens_id
         metrics["status"] = "success"
+        # Auto-record center RMS for session-level best tracking
+        rms = metrics.get("rms_spot_um", {})
+        center = rms.get("0%") if isinstance(rms, dict) else (rms if isinstance(rms, (int, float)) else None)
+        if isinstance(center, (int, float)):
+            _session_metrics[lens_id] = center
         return metrics
     except Exception as e:
         return {
@@ -248,6 +289,44 @@ def evaluate_lens(lens_id: str) -> dict:
         }
     finally:
         os.unlink(tmp_path)
+
+
+def get_best_lens() -> dict:
+    """
+    Return the best lens from this session based on evaluated RMS spot size.
+
+    Scans all lenses evaluated via evaluate_lens this session and returns
+    the one with the lowest center-field RMS, plus a ranked list of all designs.
+
+    Returns dict with:
+      - best_lens_id: lens_id of the best design (None if none evaluated yet)
+      - best_rms_um: center RMS of the best design (µm)
+      - ranking: [{lens_id, rms_spot_um}, ...] sorted best → worst
+      - count: number of designs evaluated this session
+      - summary: human-readable description
+    """
+    if not _session_metrics:
+        return {
+            "best_lens_id": None,
+            "best_rms_um": None,
+            "ranking": [],
+            "count": 0,
+            "summary": "No lenses have been evaluated yet this session.",
+        }
+    ranked = sorted(_session_metrics.items(), key=lambda kv: kv[1])
+    best_id, best_rms = ranked[0]
+    return {
+        "best_lens_id": best_id,
+        "best_rms_um": round(best_rms, 4),
+        "ranking": [
+            {"lens_id": lid, "rms_spot_um": round(rms, 4)} for lid, rms in ranked
+        ],
+        "count": len(ranked),
+        "summary": (
+            f"Best design: {best_id} with center RMS = {best_rms:.2f} µm "
+            f"({len(ranked)} designs evaluated this session)."
+        ),
+    }
 
 
 def add_lens_element(

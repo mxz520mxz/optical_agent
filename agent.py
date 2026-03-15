@@ -228,18 +228,34 @@ TOOLS: list[dict] = [
             "required": ["lens_id", "metrics"],
         },
     },
+    {
+        "name": "get_best_lens",
+        "description": (
+            "Return the best lens design seen so far this session, ranked by "
+            "center-field RMS spot size. Call this after each evaluate_lens to "
+            "check whether the current result is an improvement. Use the returned "
+            "best_lens_id to revert to the best known design before saving or "
+            "before trying a completely different structure."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 # ─── Tool Dispatcher ───────────────────────────────────────────────────────────
 
 TOOL_FUNCTIONS: dict[str, Any] = {
     "design_initial_structure": lens_tools.design_initial_structure,
-    "run_optimization": lens_tools.run_optimization,
-    "evaluate_lens": lens_tools.evaluate_lens,
-    "add_lens_element": lens_tools.add_lens_element,
-    "remove_lens_element": lens_tools.remove_lens_element,
-    "save_lens": lens_tools.save_lens,
-    "generate_report": lens_tools.generate_report,
+    "run_optimization":         lens_tools.run_optimization,
+    "evaluate_lens":            lens_tools.evaluate_lens,
+    "get_best_lens":            lens_tools.get_best_lens,
+    "add_lens_element":         lens_tools.add_lens_element,
+    "remove_lens_element":      lens_tools.remove_lens_element,
+    "save_lens":                lens_tools.save_lens,
+    "generate_report":          lens_tools.generate_report,
 }
 
 
@@ -278,11 +294,18 @@ Follow these steps in order:
    - Distortion (< 1% is excellent, < 3% is acceptable)
    - Chromatic aberration (< 5 µm is good)
 
-5. **Decide** based on evaluation:
-   - If metrics meet requirements → proceed to step 6
-   - If RMS spot is too large at edge fields → `add_lens_element` at 'rear' position
-   - If chromatic aberration is high → `add_lens_element` with a flint glass material
-   - If center AND edge RMS are both poor → try a completely different structure
+5. **Decide** based on evaluation and session history:
+   - Call `get_best_lens` to compare the current result against all previous designs
+   - If current RMS is better than or equal to the session best → continue to step 6
+   - If metrics already meet requirements → proceed to step 6
+   - If RMS spot is too large at edge fields only → `add_lens_element` at 'rear', then re-optimize
+   - If chromatic aberration is high → `add_lens_element` with flint glass, then re-optimize
+   - If center AND edge RMS are both poor (> 30 µm):
+     1. **First** try more iterations: re-run `run_optimization` with up to 5000 iterations on the best known lens
+     2. Call `get_best_lens` again — if improved, continue from the best lens
+     3. **Only if** RMS is still > 30 µm after extended optimization → try `design_initial_structure` with a different lens_type
+   - After any structural change + re-optimization, call `get_best_lens`; if the new design
+     is worse than the previous best, revert to `best_lens_id` before proceeding
    - Maximum 3 structural modifications per design session
 
 6. **Iterate**: After any structural change, re-run optimization (step 3) and re-evaluate (step 4).
@@ -307,6 +330,17 @@ All tools use **lens IDs** (short strings like `"lens_a1b2c3d4"`) instead of ful
 - `design_initial_structure` returns a `lens_id` — use this in all subsequent calls
 - Each tool that modifies a lens returns a **new** `lens_id` — always use the latest ID
 - Never pass raw JSON configs to tools; always pass the `lens_id` string
+
+## Best Design Tracking
+
+`get_best_lens` returns a ranked list of all designs evaluated this session.
+
+- Call it **after every** `evaluate_lens` to know whether the current design is the best so far
+- `best_lens_id` is the lens you should revert to if current optimization regressed
+- `best_rms_um` is the reference threshold: only consider redesigning if current RMS
+  is significantly worse AND you have already run ≥ 3000 iterations total
+- Always pass `best_lens_id` (not necessarily the most recent `lens_id`) to `save_lens`
+  and `generate_report` to ensure the final output is the best design found
 
 ## Important Notes
 - Always reason step by step about which modification will help most
