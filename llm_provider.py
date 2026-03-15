@@ -4,7 +4,7 @@ LLM provider abstraction for the optical lens design agent.
 Supports:
   - anthropic : Anthropic Claude API (default)
   - openai    : OpenAI ChatGPT / GPT-4 series
-  - local     : Local models via OpenAI-compatible API (Ollama, LM Studio, etc.)
+  - local     : Local models via Ollama (OpenAI-compatible API, e.g. qwen3.5:9b)
 
 Usage:
   client = make_client("anthropic")
@@ -20,7 +20,7 @@ from typing import Any
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-6",
     "openai":    "gpt-4o",
-    "local":     "qwen2.5:72b",   # override via --model
+    "local":     "qwen3.5:9b",    # override via --model
 }
 
 
@@ -35,18 +35,21 @@ def make_client(provider: str, api_key: str | None = None, base_url: str | None 
             kwargs["api_key"] = api_key
         return _anthropic.Anthropic(**kwargs)
 
-    elif provider in ("openai", "local"):
+    elif provider == "openai":
         from openai import OpenAI
         kwargs: dict[str, Any] = {}
         if api_key:
             kwargs["api_key"] = api_key
-        elif provider == "local":
-            # Local models typically don't need a real key
-            kwargs["api_key"] = os.environ.get("OPENAI_API_KEY", "local")
         if base_url:
             kwargs["base_url"] = base_url
-        elif provider == "local":
-            kwargs["base_url"] = "http://localhost:11434/v1"
+        return OpenAI(**kwargs)
+
+    elif provider == "local":
+        from openai import OpenAI
+        kwargs: dict[str, Any] = {}
+        # Local models (Ollama) don't need a real API key
+        kwargs["api_key"] = api_key or os.environ.get("OPENAI_API_KEY", "local")
+        kwargs["base_url"] = base_url or "http://localhost:11434/v1"
         return OpenAI(**kwargs)
 
     else:
@@ -76,14 +79,23 @@ def append_assistant_message(messages: list[dict], provider: str, raw_response) 
     """Append the assistant turn to the message history (in-place)."""
     if provider == "anthropic":
         messages.append({"role": "assistant", "content": raw_response.content})
-    else:
-        # OpenAI: extract message object
+    elif provider == "openai":
         msg = raw_response.choices[0].message
         assistant_msg = {
             "role": "assistant",
             "content": msg.content or "",  # defend against content being None
         }
         # Only attach tool_calls when there actually are some; never send null/empty list
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+        messages.append(assistant_msg)
+    elif provider == "local":
+        # Local (Ollama) uses OpenAI-compatible response format
+        msg = raw_response.choices[0].message
+        assistant_msg = {
+            "role": "assistant",
+            "content": msg.content or "",
+        }
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
         messages.append(assistant_msg)
@@ -106,8 +118,16 @@ def append_tool_results(
             for r in tool_results
         ]
         messages.append({"role": "user", "content": anthropic_results})
-    else:
-        # OpenAI: one message per tool call with role="tool"
+    elif provider == "openai":
+        # One message per tool call with role="tool"
+        for r in tool_results:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": r["id"],
+                "content": r["content"],
+            })
+    elif provider == "local":
+        # Local (Ollama) uses OpenAI-compatible tool result format
         for r in tool_results:
             messages.append({
                 "role": "tool",
@@ -141,9 +161,15 @@ def call_llm(
     """
     if provider == "anthropic":
         return _call_anthropic(client, model, system, messages, tools, max_tokens)
+    elif provider == "openai":
+        return _call_openai(client, model, system, messages, tools, max_tokens)
+    elif provider == "local":
+        return _call_local(client, model, system, messages, tools, max_tokens)
     else:
-        return _call_openai(client, provider, model, system, messages, tools, max_tokens)
+        raise ValueError(f"Unknown provider: {provider!r}")
 
+
+# ── Anthropic implementation ───────────────────────────────────────────────────
 
 def _call_anthropic(client, model, system, messages, tools, max_tokens):
     response = client.messages.create(
@@ -166,7 +192,9 @@ def _call_anthropic(client, model, system, messages, tools, max_tokens):
     return {"stop_reason": stop_reason, "text": text, "tool_calls": tool_calls, "raw": response}
 
 
-def _call_openai(client, provider, model, system, messages, tools, max_tokens):
+# ── OpenAI implementation ──────────────────────────────────────────────────────
+
+def _call_openai(client, model, system, messages, tools, max_tokens):
     openai_tools = _anthropic_tools_to_openai(tools)
 
     # Build message list with system injected at front
@@ -197,6 +225,41 @@ def _call_openai(client, provider, model, system, messages, tools, max_tokens):
     stop_reason = "tool_use" if finish == "tool_calls" else "end_turn"
     return {"stop_reason": stop_reason, "text": text, "tool_calls": tool_calls, "raw": response}
 
+
+# ── Local (Ollama) implementation ─────────────────────────────────────────────
+
+def _call_local(client, model, system, messages, tools, max_tokens):
+    """Call a local model via Ollama's OpenAI-compatible API."""
+    openai_tools = _anthropic_tools_to_openai(tools)
+    oai_messages = [{"role": "system", "content": system}] + _convert_messages_to_openai(messages)
+
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=max_tokens,
+        tools=openai_tools,
+        tool_choice="auto",
+        messages=oai_messages,
+    )
+
+    choice = response.choices[0]
+    msg = choice.message
+
+    text = msg.content or ""
+    tool_calls = []
+    if msg.tool_calls:
+        for tc in msg.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append({"id": tc.id, "name": tc.function.name, "input": args})
+
+    finish = choice.finish_reason
+    stop_reason = "tool_use" if finish == "tool_calls" else "end_turn"
+    return {"stop_reason": stop_reason, "text": text, "tool_calls": tool_calls, "raw": response}
+
+
+# ── Message format converter (shared by OpenAI and Local) ─────────────────────
 
 def _convert_messages_to_openai(messages: list[dict]) -> list[dict]:
     """
