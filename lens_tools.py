@@ -102,7 +102,7 @@ def run_optimization(
     lens_id: str,
     iterations: int = 2000,
     learning_rates: list | None = None,
-    lambda_reg: float = 0.1,
+    lambda_reg: float = 0.01,
 ) -> dict:
     """
     Run gradient optimization on a stored lens (DeepLens).
@@ -151,17 +151,25 @@ def run_optimization(
 
         # ── Training loop: RMS spot error + optional regularization ─────────
         for _ in range(iterations):
-            # loss_rms() → avg RMS tensor, shape (num_grid, num_grid)
-            l_rms = lens.loss_rms()
+            optimizer.zero_grad()
+
+            # Explicit depth=-10000 (infinity focus) matches _extract_metrics()
+            l_rms = lens.loss_rms(depth=-10000.0)
             L = l_rms.mean()
 
+            # Degenerate-state guard: all rays invalid → mean = 0, no point continuing
+            if L.item() < 1e-8:
+                break
+
             # loss_reg() → (combined_reg_scalar, loss_dict); weight by lambda_reg
+            # Note: loss_reg() has internal w_focus=10.0, so effective weight = lambda_reg * 10
             if lambda_reg > 0:
                 l_reg, _ = lens.loss_reg()
                 L = L + lambda_reg * l_reg
 
-            optimizer.zero_grad()
             L.backward()
+            # Gradient clipping prevents parameter explosion on large-loss initial designs
+            torch.nn.utils.clip_grad_norm_(lens.parameters(), max_norm=1.0)
             optimizer.step()
             scheduler.step()
 

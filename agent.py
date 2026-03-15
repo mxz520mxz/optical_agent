@@ -101,7 +101,7 @@ TOOLS: list[dict] = [
                 },
                 "lambda_reg": {
                     "type": "number",
-                    "description": "Weight for regularization loss (loss_reg). Default: 0.1. Set to 0 to disable.",
+                    "description": "Weight for regularization loss (loss_reg). Default: 0.01. Set to 0 to disable. Note: loss_reg() has internal w_focus=10, so effective focus weight = lambda_reg * 10.",
                 },
             },
             "required": ["lens_id"],
