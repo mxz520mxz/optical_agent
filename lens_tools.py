@@ -102,16 +102,18 @@ def run_optimization(
     lens_id: str,
     iterations: int = 2000,
     learning_rates: list | None = None,
-    decay: float = 0.02,
 ) -> dict:
     """
-    Run DeepLens gradient-based optimization on a stored lens.
+    Run RMS-based gradient optimization on a stored lens (DeepLens).
+
+    Uses a manual PyTorch training loop (loss_rms + CosineAnnealing),
+    following the pattern from DeepLens/2_autolens_rms.py.
 
     Args:
-        lens_id: ID of the lens to optimize (from design_initial_structure or previous call)
+        lens_id: ID of the lens to optimize
         iterations: Number of gradient descent iterations
-        learning_rates: [d, c, k, a] rates. Default: [1e-3, 1e-4, 1e-1, 1e-4]
-        decay: Learning rate decay factor
+        learning_rates: [c, d, k, a] learning rates for Adam.
+                        Default: [1e-4, 1e-4, 1e-2, 1e-4]
 
     Returns dict with:
       - lens_id: ID of the optimized lens (new ID)
@@ -122,7 +124,7 @@ def run_optimization(
     except ValueError as e:
         return {"error": str(e), "summary": f"Failed to load lens: {e}"}
 
-    lrs = learning_rates or [1e-3, 1e-4, 1e-1, 1e-4]
+    lrs = learning_rates or [1e-4, 1e-4, 1e-2, 1e-4]
 
     if not DEEPLENS_AVAILABLE:
         return _mock_optimization(lens_id, lens_config, iterations)
@@ -138,17 +140,24 @@ def run_optimization(
         device = "cuda" if torch.cuda.is_available() else "cpu"
         lens = GeoLens(filename=tmp_path, device=device)
 
-        lens.optimize(
-            lrs=lrs,
-            decay=decay,
-            iterations=iterations,
-            test_per_iter=max(100, iterations // 20),
-            centroid=False,
-            optim_mat=False,
-            shape_control=True,
-            result_dir=result_dir,
+        # ── Optimizer & scheduler (same pattern as 2_autolens_rms.py) ──────
+        optimizer = lens.get_optimizer(lrs, optim_mat=False)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=max(1, iterations // 4), T_mult=1
         )
 
+        # ── Training loop: minimise RMS spot error only ─────────────────────
+        for _ in range(iterations):
+            # loss_rms() returns avg RMS tensor of shape (num_grid, num_grid)
+            l_rms = lens.loss_rms()
+            L = l_rms.mean()
+
+            optimizer.zero_grad()
+            L.backward()
+            optimizer.step()
+            scheduler.step()
+
+        # ── Save result ──────────────────────────────────────────────────────
         out_json = os.path.join(result_dir, "optimized.json")
         lens.write_lens_json(out_json)
         with open(out_json) as f:
@@ -165,7 +174,7 @@ def run_optimization(
         }
     except Exception as e:
         return {
-            "lens_id": lens_id,  # return original ID on failure
+            "lens_id": lens_id,
             "status": "error",
             "error": str(e),
             "summary": f"Optimization failed: {e}",

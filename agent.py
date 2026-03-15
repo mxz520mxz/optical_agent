@@ -97,11 +97,7 @@ TOOLS: list[dict] = [
                 "learning_rates": {
                     "type": "array",
                     "items": {"type": "number"},
-                    "description": "Learning rates for [d, c, k, a] parameters. Default: [1e-3, 1e-4, 1e-1, 1e-4]",
-                },
-                "decay": {
-                    "type": "number",
-                    "description": "Learning rate decay factor (default: 0.02)",
+                    "description": "Learning rates for [c, d, k, a] parameters. Default: [1e-4, 1e-4, 1e-2, 1e-4]",
                 },
             },
             "required": ["lens_id"],
