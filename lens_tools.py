@@ -534,7 +534,6 @@ def _extract_metrics(lens) -> dict:
                 num_grid=(5, 5),
                 depth=-10000.0,
                 num_rays=512,
-                wvln=0.588,
             )
             rms_vals[label] = float(loss.item()) * 1000
         metrics["rms_spot_um"] = rms_vals
@@ -547,15 +546,7 @@ def _extract_metrics(lens) -> dict:
     except Exception:
         metrics["distortion_pct"] = "N/A"
 
-    try:
-        from deeplens.basics import WAVE_RGB
-        rms_r = float(lens.loss_rms(num_grid=(5, 5), depth=-10000.0,
-                                     num_rays=256, wvln=WAVE_RGB[0]).item())
-        rms_b = float(lens.loss_rms(num_grid=(5, 5), depth=-10000.0,
-                                     num_rays=256, wvln=WAVE_RGB[2]).item())
-        metrics["chromatic_aberration_um"] = f"{abs(rms_r - rms_b) * 1000:.2f} µm"
-    except Exception:
-        metrics["chromatic_aberration_um"] = "N/A"
+    metrics["chromatic_aberration_um"] = "N/A"
 
     rms_center = metrics.get("rms_spot_um", {})
     if isinstance(rms_center, dict) and "0%" in rms_center:
