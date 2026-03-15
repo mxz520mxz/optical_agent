@@ -102,18 +102,21 @@ def run_optimization(
     lens_id: str,
     iterations: int = 2000,
     learning_rates: list | None = None,
+    lambda_reg: float = 0.1,
 ) -> dict:
     """
-    Run RMS-based gradient optimization on a stored lens (DeepLens).
+    Run gradient optimization on a stored lens (DeepLens).
 
-    Uses a manual PyTorch training loop (loss_rms + CosineAnnealing),
-    following the pattern from DeepLens/2_autolens_rms.py.
+    Uses a manual PyTorch training loop combining RMS spot error and
+    regularization loss, following the pattern from DeepLens/2_autolens_rms.py.
 
     Args:
         lens_id: ID of the lens to optimize
         iterations: Number of gradient descent iterations
         learning_rates: [c, d, k, a] learning rates for Adam.
                         Default: [1e-4, 1e-4, 1e-2, 1e-4]
+        lambda_reg: Weight for the regularization loss term (default 0.1).
+                    Set to 0.0 to disable regularization.
 
     Returns dict with:
       - lens_id: ID of the optimized lens (new ID)
@@ -146,11 +149,16 @@ def run_optimization(
             optimizer, T_0=max(1, iterations // 4), T_mult=1
         )
 
-        # ── Training loop: minimise RMS spot error only ─────────────────────
+        # ── Training loop: RMS spot error + optional regularization ─────────
         for _ in range(iterations):
-            # loss_rms() returns avg RMS tensor of shape (num_grid, num_grid)
+            # loss_rms() → avg RMS tensor, shape (num_grid, num_grid)
             l_rms = lens.loss_rms()
             L = l_rms.mean()
+
+            # loss_reg() → (combined_reg_scalar, loss_dict); weight by lambda_reg
+            if lambda_reg > 0:
+                l_reg, _ = lens.loss_reg()
+                L = L + lambda_reg * l_reg
 
             optimizer.zero_grad()
             L.backward()

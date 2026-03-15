@@ -99,6 +99,10 @@ TOOLS: list[dict] = [
                     "items": {"type": "number"},
                     "description": "Learning rates for [c, d, k, a] parameters. Default: [1e-4, 1e-4, 1e-2, 1e-4]",
                 },
+                "lambda_reg": {
+                    "type": "number",
+                    "description": "Weight for regularization loss (loss_reg). Default: 0.1. Set to 0 to disable.",
+                },
             },
             "required": ["lens_id"],
         },

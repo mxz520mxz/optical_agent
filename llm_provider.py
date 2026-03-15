@@ -77,9 +77,16 @@ def append_assistant_message(messages: list[dict], provider: str, raw_response) 
     if provider == "anthropic":
         messages.append({"role": "assistant", "content": raw_response.content})
     else:
-        # OpenAI: append the message object directly
+        # OpenAI: extract message object
         msg = raw_response.choices[0].message
-        messages.append({"role": "assistant", "content": msg.content, "tool_calls": msg.tool_calls})
+        assistant_msg = {
+            "role": "assistant",
+            "content": msg.content or "",  # defend against content being None
+        }
+        # Only attach tool_calls when there actually are some; never send null/empty list
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+        messages.append(assistant_msg)
 
 
 def append_tool_results(
@@ -202,6 +209,10 @@ def _convert_messages_to_openai(messages: list[dict]) -> list[dict]:
     """
     result = []
     for msg in messages:
+        # Already in OpenAI format (assistant with tool_calls, or tool result) — pass through
+        if "tool_calls" in msg or "tool_call_id" in msg:
+            result.append(msg)
+            continue
         role = msg["role"]
         content = msg["content"]
 
