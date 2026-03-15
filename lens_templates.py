@@ -114,12 +114,18 @@ def _scale_template(
 
     # Scale all surface distances and curvatures
     for surf in config["surfaces"]:
-        surf["r"] = surf["r"] * scale
-        surf["c"] = surf["c"] / scale  # curvature = 1/ROC, so scales inversely
+        # 安全缩放基础几何参数
+        if "r" in surf:
+            surf["r"] = surf["r"] * scale
+        if "c" in surf:
+            surf["c"] = surf["c"] / scale  # curvature = 1/ROC, so scales inversely
         if surf.get("roc") and surf["roc"] != 0:
             surf["roc"] = surf["roc"] * scale
-        surf["d"] = surf["d"] * scale
-        surf["d_next"] = surf["d_next"] * scale
+        if "d" in surf:
+            surf["d"] = surf["d"] * scale
+        if "d_next" in surf:
+            surf["d_next"] = surf["d_next"] * scale
+            
         # Scale aspheric coefficients (ai_n scales as 1/scale^(n-1))
         for n, key in enumerate(["ai2", "ai4", "ai6", "ai8", "ai10", "ai12"], start=1):
             if key in surf:

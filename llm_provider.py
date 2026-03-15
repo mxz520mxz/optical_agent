@@ -18,7 +18,7 @@ from typing import Any
 # ── Default model names per provider ──────────────────────────────────────────
 
 DEFAULT_MODELS = {
-    "anthropic": "claude-opus-4-6",
+    "anthropic": 'claude-3-5-sonnet-20241022', #"claude-opus-4-6"
     "openai":    "gpt-4o",
     "local":     "qwen2.5:72b",   # override via --model
 }
@@ -32,22 +32,30 @@ def make_client(provider: str, api_key: str | None = None, base_url: str | None 
         import anthropic as _anthropic
         kwargs = {}
         if api_key:
+            
             kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+
         return _anthropic.Anthropic(**kwargs)
 
     elif provider in ("openai", "local"):
         from openai import OpenAI
         kwargs: dict[str, Any] = {}
         if api_key:
+            print('api_key:',api_key)
             kwargs["api_key"] = api_key
         elif provider == "local":
             # Local models typically don't need a real key
             kwargs["api_key"] = os.environ.get("OPENAI_API_KEY", "local")
         if base_url:
+            print('base_url:',base_url)
             kwargs["base_url"] = base_url
         elif provider == "local":
             kwargs["base_url"] = "http://localhost:11434/v1"
+       
         return OpenAI(**kwargs)
+        # return client
 
     else:
         raise ValueError(f"Unknown provider: {provider!r}. Choose from: anthropic, openai, local")
@@ -79,7 +87,15 @@ def append_assistant_message(messages: list[dict], provider: str, raw_response) 
     else:
         # OpenAI: append the message object directly
         msg = raw_response.choices[0].message
-        messages.append({"role": "assistant", "content": msg.content, "tool_calls": msg.tool_calls})
+        
+        assistant_msg = {
+            "role": "assistant",
+            "content": msg.content,
+        }
+        if msg.tool_calls:
+            assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+            
+        messages.append(assistant_msg)
 
 
 def append_tool_results(
@@ -135,6 +151,7 @@ def call_llm(
     if provider == "anthropic":
         return _call_anthropic(client, model, system, messages, tools, max_tokens)
     else:
+        print('we will call openai!!')
         return _call_openai(client, provider, model, system, messages, tools, max_tokens)
 
 
@@ -171,6 +188,7 @@ def _call_openai(client, provider, model, system, messages, tools, max_tokens):
         tools=openai_tools,
         tool_choice="auto",
         messages=oai_messages,
+        parallel_tool_calls=False,
     )
 
     choice = response.choices[0]
@@ -190,31 +208,30 @@ def _call_openai(client, provider, model, system, messages, tools, max_tokens):
     stop_reason = "tool_use" if finish == "tool_calls" else "end_turn"
     return {"stop_reason": stop_reason, "text": text, "tool_calls": tool_calls, "raw": response}
 
-
 def _convert_messages_to_openai(messages: list[dict]) -> list[dict]:
     """
     Convert Anthropic-format message history to OpenAI format.
-
-    Handles:
-    - Plain string content  → passed through
-    - list content (Anthropic blocks) → tool_use blocks become tool_calls,
-      tool_result blocks become role=tool messages
     """
     result = []
     for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
+        role = msg.get("role")
+        content = msg.get("content")
+
+        # 🎯 新增修复：如果是标准的 OpenAI 工具调用或工具结果，原样保留！
+        if "tool_calls" in msg or "tool_call_id" in msg:
+            result.append(msg)
+            continue
 
         if isinstance(content, str):
             result.append({"role": role, "content": content})
             continue
 
         if not isinstance(content, list):
-            # Already in OpenAI format (e.g., tool_calls on assistant message)
+            # Already in OpenAI format
             result.append(msg)
             continue
 
-        # Anthropic content block list
+        # Anthropic content block list (保留你原来的这部分代码)
         text_parts = []
         tool_calls_oai = []
         tool_results_oai = []
@@ -250,14 +267,16 @@ def _convert_messages_to_openai(messages: list[dict]) -> list[dict]:
                 })
 
         if role == "assistant":
-            out: dict[str, Any] = {"role": "assistant", "content": " ".join(text_parts) or None}
+            out: dict[str, Any] = {"role": "assistant", "content": " ".join(text_parts)}
             if tool_calls_oai:
                 out["tool_calls"] = tool_calls_oai
             result.append(out)
         elif role == "user":
-            if tool_results_oai:
-                result.extend(tool_results_oai)
-            else:
+            if text_parts:
                 result.append({"role": "user", "content": " ".join(text_parts)})
+
+            # tool_result blocks become role=tool messages
+            for tr in tool_results_oai:
+                result.append(tr)
 
     return result

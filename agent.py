@@ -366,6 +366,7 @@ def run_agent(
         if verbose:
             print(f"[Agent call {iteration}] Thinking...", end=" ", flush=True)
 
+        # 这里是不是加一个skill更好呢
         resp = llm_provider.call_llm(
             client=client,
             provider=provider,
@@ -465,7 +466,7 @@ Examples:
     parser.add_argument(
         "--description", "-d",
         type=str,
-        default=None,
+        default="Design a 24mm f/2.8 wide-angle lens for APS-C sensor",
         help="Natural language description of the desired lens",
     )
     parser.add_argument(
@@ -482,14 +483,14 @@ Examples:
     parser.add_argument(
         "--provider", "-p",
         type=str,
-        default="anthropic",
+        default="openai",
         choices=["anthropic", "openai", "local"],
         help="LLM provider: anthropic (default), openai, or local",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default=None,
+        default='gpt-4o',
         help=(
             "Model name to use (default per provider: "
             "claude-opus-4-6 / gpt-4o / qwen2.5:72b)"
@@ -498,13 +499,13 @@ Examples:
     parser.add_argument(
         "--base-url",
         type=str,
-        default=None,
+        default="https://openai.davenger.top/v1",
         help="API base URL for local models (e.g. http://localhost:11434/v1)",
     )
     parser.add_argument(
         "--api-key",
         type=str,
-        default=None,
+        default="sk-i2lQ8NHJ0q709hDyLUE5spX6yAsF0teTz8PxezeNhPDUijeo",
         help="Override API key (otherwise reads from environment variable)",
     )
     args = parser.parse_args()
