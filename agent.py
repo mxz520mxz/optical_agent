@@ -86,9 +86,9 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Current lens configuration dict (from design_initial_structure or previous optimization)",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID returned by design_initial_structure or a previous tool call (e.g. 'lens_a1b2c3d4')",
                 },
                 "iterations": {
                     "type": "integer",
@@ -104,7 +104,7 @@ TOOLS: list[dict] = [
                     "description": "Learning rate decay factor (default: 0.02)",
                 },
             },
-            "required": ["lens_config"],
+            "required": ["lens_id"],
         },
     },
     {
@@ -116,12 +116,12 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Lens configuration dict to evaluate",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID to evaluate (e.g. 'lens_a1b2c3d4')",
                 },
             },
-            "required": ["lens_config"],
+            "required": ["lens_id"],
         },
     },
     {
@@ -133,9 +133,9 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Current lens configuration dict",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID of the current design (e.g. 'lens_a1b2c3d4')",
                 },
                 "position": {
                     "type": "string",
@@ -160,7 +160,7 @@ TOOLS: list[dict] = [
                     "description": "Shape of the new element",
                 },
             },
-            "required": ["lens_config"],
+            "required": ["lens_id"],
         },
     },
     {
@@ -172,16 +172,16 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Current lens configuration dict",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID of the current design (e.g. 'lens_a1b2c3d4')",
                 },
                 "element_index": {
                     "type": "integer",
                     "description": "1-based index of the element to remove (front-to-back)",
                 },
             },
-            "required": ["lens_config", "element_index"],
+            "required": ["lens_id", "element_index"],
         },
     },
     {
@@ -190,9 +190,9 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Lens configuration dict to save",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID to save (e.g. 'lens_a1b2c3d4')",
                 },
                 "filename": {
                     "type": "string",
@@ -204,7 +204,7 @@ TOOLS: list[dict] = [
                     "description": "Output format: 'json' (default) or 'zmx' (Zemax)",
                 },
             },
-            "required": ["lens_config"],
+            "required": ["lens_id"],
         },
     },
     {
@@ -216,16 +216,16 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "lens_config": {
-                    "type": "object",
-                    "description": "Final lens configuration dict",
+                "lens_id": {
+                    "type": "string",
+                    "description": "Lens ID of the final design (e.g. 'lens_a1b2c3d4')",
                 },
                 "metrics": {
                     "type": "object",
-                    "description": "Evaluation metrics from evaluate_lens",
+                    "description": "Evaluation metrics dict from evaluate_lens",
                 },
             },
-            "required": ["lens_config", "metrics"],
+            "required": ["lens_id", "metrics"],
         },
     },
 ]
@@ -300,6 +300,13 @@ Follow these steps in order:
   - N-F2: '1.6200/36.4' (standard flint)
   - N-SF11: '1.7847/25.7' (dense flint)
   - N-SF5: '1.6727/32.1' (medium flint)
+
+## Lens ID Memory System
+
+All tools use **lens IDs** (short strings like `"lens_a1b2c3d4"`) instead of full JSON configurations.
+- `design_initial_structure` returns a `lens_id` — use this in all subsequent calls
+- Each tool that modifies a lens returns a **new** `lens_id` — always use the latest ID
+- Never pass raw JSON configs to tools; always pass the `lens_id` string
 
 ## Important Notes
 - Always reason step by step about which modification will help most
@@ -433,13 +440,10 @@ def run_agent(
 
 
 def _fmt_tool_args(inputs: dict) -> str:
-    """Format tool arguments for display (omit large lens_config dicts)."""
+    """Format tool arguments for display."""
     parts = []
     for k, v in inputs.items():
-        if k == "lens_config":
-            n_surf = len(v.get("surfaces", []))
-            parts.append(f"lens_config=<{n_surf} surfaces>")
-        elif k == "metrics" and isinstance(v, dict):
+        if k == "metrics" and isinstance(v, dict):
             parts.append("metrics=<...>")
         else:
             parts.append(f"{k}={repr(v)}")

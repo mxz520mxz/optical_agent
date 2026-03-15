@@ -115,7 +115,8 @@ def _scale_template(
     # Scale all surface distances and curvatures
     for surf in config["surfaces"]:
         surf["r"] = surf["r"] * scale
-        surf["c"] = surf["c"] / scale  # curvature = 1/ROC, so scales inversely
+        if "c" in surf:
+            surf["c"] = surf["c"] / scale  # curvature = 1/ROC, so scales inversely
         if surf.get("roc") and surf["roc"] != 0:
             surf["roc"] = surf["roc"] * scale
         surf["d"] = surf["d"] * scale
