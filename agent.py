@@ -300,10 +300,13 @@ Follow these steps in order:
    - If metrics already meet requirements → proceed to step 6
    - If RMS spot is too large at edge fields only → `add_lens_element` at 'rear', then re-optimize
    - If chromatic aberration is high → `add_lens_element` with flint glass, then re-optimize
-   - If center AND edge RMS are both poor (> 30 µm):
-     1. **First** try more iterations: re-run `run_optimization` with up to 5000 iterations on the best known lens
-     2. Call `get_best_lens` again — if improved, continue from the best lens
-     3. **Only if** RMS is still > 30 µm after extended optimization → try `design_initial_structure` with a different lens_type
+   - If center AND edge RMS are both poor (> 30 µm), follow this escalation in order:
+     1. **Try more iterations first**: re-run `run_optimization` with up to 5000 iterations on the best known lens
+     2. Call `get_best_lens` — if now < 30 µm, continue from the best lens
+     3. **If still > 30 µm**: try structural modifications (these count toward the max 3 limit):
+        - `add_lens_element` (e.g. rear biconcave or field flattener) then re-optimize
+        - If adding an element makes it worse (check via `get_best_lens`): try `remove_lens_element` on the weakest element instead, then re-optimize
+     4. **Only after exhausting more-iterations AND add/remove attempts**: use `design_initial_structure` with a different `lens_type` as a last resort
    - After any structural change + re-optimization, call `get_best_lens`; if the new design
      is worse than the previous best, revert to `best_lens_id` before proceeding
    - Maximum 3 structural modifications per design session
