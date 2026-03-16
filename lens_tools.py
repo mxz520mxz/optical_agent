@@ -569,7 +569,7 @@ def save_lens(lens_id: str, filename: str = "final_lens", fmt: str = "json") -> 
         os.unlink(tmp_path)
 
 
-def generate_report(lens_id: str, metrics: dict) -> dict:
+def generate_report(lens_id: str, metrics: dict | None = None) -> dict:
     """
     Generate a human-readable lens design report.
 
@@ -583,6 +583,9 @@ def generate_report(lens_id: str, metrics: dict) -> dict:
         lens_config = lens_memory.load(lens_id)
     except ValueError as e:
         return {"error": str(e), "summary": f"Failed to load lens: {e}"}
+
+    if metrics is None:
+        metrics = evaluate_lens(lens_id)
 
     foclen = lens_config.get("foclen", 0)
     fnum = lens_config.get("fnum", 0)

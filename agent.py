@@ -225,7 +225,7 @@ TOOLS: list[dict] = [
                     "description": "Evaluation metrics dict from evaluate_lens",
                 },
             },
-            "required": ["lens_id", "metrics"],
+            "required": ["lens_id"],
         },
     },
     {
